@@ -69,7 +69,13 @@ claude-mem-integration-cookbook/
 | **claude-mem** | 持久化记忆核心 | https://github.com/thedotmack/claude-mem |
 | **cc-switch** | 跨设备/跨 IDE 配置同步 | https://github.com/farion1231/cc-switch |
 | **muxcp** | 多 MCP server 聚合代理 | 配置位于 `~/.config/muxcp/` |
-| **kg-hub** | 多源知识图谱（可选，进阶） | （社区项目，按需引入） |
+| **kg-hub** | 多源知识图谱（在 claude-mem 之上聚合的中央 KG） | https://github.com/commiao/kg-hub |
+
+## 全栈架构
+
+本仓库是**个人 AI 工程记忆栈**的一部分。完整全栈视图（含 kg-hub / cc-switch / muxcp / 各 IDE 协同关系）见：
+
+→ **[kg-hub/ARCHITECTURE.md](https://github.com/commiao/kg-hub/blob/main/ARCHITECTURE.md)** ← single source of truth for the whole stack
 
 ## 贡献
 
