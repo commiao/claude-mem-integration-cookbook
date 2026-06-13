@@ -1,0 +1,38 @@
+# claude-mem runtime data — NEVER commit
+.claude-mem/
+claude-mem.db
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.local
+secrets.*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build / language artifacts
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Personal notes (in case anyone clones to add their own)
+NOTES-PRIVATE.md
+PRIVATE-*.md
