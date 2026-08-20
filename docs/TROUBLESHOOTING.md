@@ -370,6 +370,38 @@ codex            37        2026-07-13 07:22:39   ← 🚨 5 周前！
 
 `COUNT(*)=37` 完全正常；**`MAX(started_at)` 一眼暴露问题**。
 
+**进阶：`MAX` 证明不了"稳定在产"**
+
+`MAX` 只说明最后一条是新的——可能是"修好后跑了一次又停"。要确认是**持续流**，看分时段计数：
+
+```bash
+sqlite3 -header -column ~/.claude-mem/claude-mem.db "
+SELECT strftime('%H:%M', datetime(o.created_at_epoch/1000,'unixepoch','localtime')) AS hhmm,
+       COUNT(*) AS obs
+FROM observations o JOIN sdk_sessions s ON o.memory_session_id = s.memory_session_id
+WHERE s.platform_source='codex'
+  AND o.created_at_epoch/1000 > strftime('%s','now')-7200
+GROUP BY strftime('%H', datetime(o.created_at_epoch/1000,'unixepoch','localtime')),
+         CAST(strftime('%M', datetime(o.created_at_epoch/1000,'unixepoch','localtime')) AS INT)/10
+ORDER BY hhmm;"
+```
+
+健康的样子是**多个时段都有数**（下例是修复后 2 小时内的真实输出）：
+
+```
+hhmm   obs
+-----  ---
+22:49  3
+22:50  6
+23:07  15
+23:19  10     ← 7 个时段都有产出 = 稳定流
+23:20  4
+23:39  11
+23:46  16
+```
+
+只有最后一个时段有数 = 可能是脉冲，再等 30 分钟复查。
+
 **同时验 observations 层**（session 建了 ≠ 观察生成成功，两层可能只坏一层）：
 
 ```bash
