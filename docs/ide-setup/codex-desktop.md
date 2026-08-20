@@ -64,17 +64,18 @@ Next steps:
 7 hooks need review before they can run    [Review hooks]
 ```
 
-### Step 3: 审查并批准 7 个 hooks
+### Step 3: 审查并批准 N 个 hooks
 
-点 `[Review hooks]`，会列出 7 个 hook：
+点 `[Review hooks]`，会列出若干 hook。**数量随 claude-mem 版本变**——不要按固定数字预期：
 
-| 事件 | 数量 | 做什么 |
-|---|---|---|
-| SessionStart | 3 | (1) version-check (2) start worker if down (3) load context |
-| UserPromptSubmit | 1 | 建立 session id |
-| PreToolUse | 1 | file-context（Bash/Read 前提取文件上下文） |
-| PostToolUse | 1 | 把工具调用转成观察 |
-| Stop | 1 | session summary |
+| 事件 | v13.0 时 | v13.15 时 | 做什么 |
+|---|---|---|---|
+| SessionStart | 3 | **1**（已合并） | version-check / start worker if down / load context |
+| UserPromptSubmit | 1 | 1 | 建立 session id |
+| PreToolUse | 1 | 1 | file-context（Bash/Read 前提取文件上下文） |
+| PostToolUse | 1 | 1 | 把工具调用转成观察 |
+| Stop | 1 | 1 | session summary |
+| **合计** | **7** | **5** | |
 
 **安全评估**：每个 hook 都是 `node $PLUGIN_ROOT/scripts/bun-runner.js worker-service.cjs hook codex <subcommand>` 形式：
 - 只调本地 node 脚本
@@ -83,7 +84,7 @@ Next steps:
 - 不读 Keychain / .ssh / .aws
 - 不删/改任何文件
 
-**判定**：**批准全部 7 个 hooks**。
+**判定**：**批准列出的全部 hooks**。
 
 ### Step 4: 完全退出 Codex 并重新打开
 
@@ -91,6 +92,53 @@ Next steps:
 - Windows: 关闭所有窗口 + 右键托盘 Quit
 
 重新打开 Codex。**hook 只在新会话起 SessionStart 时生效**，不会自动重放到旧会话。
+
+---
+
+## ⚠️ 每次 claude-mem 升级后，必须重新 Approve hooks
+
+**这是本文档最容易被忽略、后果最严重的一条。**
+
+Codex 对每个 hook 存一份 `trusted_hash`（sha256）在 `~/.codex/config.toml`。claude-mem 升级会改写 `codex-hooks.json` —— hook 内容变了、甚至 hook 数量变了（如 v13.x 把 SessionStart 从 3 个合并成 1 个）→ **hash 对不上 → Codex 静默拒绝执行**。
+
+**静默**是关键词：不报错、不弹窗、config.toml 里配置全都在。表现是"看起来一切正常，但一条数据都没有"。
+
+### 实战案例（2026-07-13 ~ 08-20，停摆 5 周才被发现）
+
+| 时间 | 事件 |
+|---|---|
+| 05-13 | Approve 7 个 hook，采集正常 |
+| 07-13 07:22 | 最后一次成功采集 |
+| 07-13 之后 | claude-mem 升级 → hook 7→5 → hash 全失效 → **静默停摆** |
+| 08-20 | 排查发现：37 个 codex 会话全部停在 07-13，而 claude 每天 100-400 条 |
+| 08-20 | GUI 重新 Approve + 重启 → 当天恢复（sessions 37→40，observations 当天 +N） |
+
+**5 周无人察觉**，因为没有任何错误信号。
+
+### 升级后的固定动作
+
+```
+升级 claude-mem（npx claude-mem@latest install --upgrade 或插件自动升级）
+   ↓
+打开 Codex → Settings → Plugins → claude-mem
+   ↓
+若显示 "N hooks need review" → Review → Approve all
+   ↓
+Cmd+Q 完全退出 → 重新打开
+   ↓
+跑一次验收（见下方「验收」节）
+```
+
+### 判据陷阱：不要数 trusted_hash 的条数
+
+approve 后 Codex **只更新匹配的 hash，不清理已消失 hook 的旧条目**。所以：
+
+```bash
+grep -c trusted_hash ~/.codex/config.toml
+# 修复前：7   修复后：仍然是 7（5 条新 + 2 条 SessionStart 旧残留）
+```
+
+**数量不是判据**。要判断是否真的生效，**只看数据**——见下方验收节的 SQL。
 
 ## 验收
 

@@ -20,6 +20,7 @@
 12. [v13.2 写工具 `requires CLAUDE_MEM_RUNTIME=server-beta`](#server-beta-runtime)
 13. [`worker PID file points to a live process, skipping duplicate spawn`](#duplicate-spawn)
 14. [新会话产生的观察看不到 / 数据库没增长](#no-new-obs)
+15. [**某个 IDE 的采集静默停摆数周无人察觉**（claude-mem 升级后 hook 失信）](#silent-capture-halt) ← 最隐蔽
 
 ---
 
@@ -326,6 +327,100 @@ sqlite3 ~/.claude-mem/claude-mem.db \
 ```
 
 按返回结果走对应章节。
+
+---
+
+<a id="silent-capture-halt"></a>
+## 15. 某个 IDE 的采集静默停摆，数周无人察觉
+
+**症状**：一切"看起来正常"——worker 健康、config 里 hook 配置都在、其他 IDE 每天都在写。但**某一个 IDE 的数据停在几周前的某一天**，之后一条没有。没有任何错误日志。
+
+**实测案例**：Codex 采集从 2026-07-13 07:22 停摆，到 08-20 才被发现，**空窗 5 周**。
+
+### 为什么这么难发现
+
+| 干扰因素 | 具体表现 |
+|---|---|
+| 没有错误信号 | Codex 的 hook 审批是安全设计，hash 不匹配就**静默不执行**，不报错 |
+| 配置完好 | `~/.codex/config.toml` 里 plugin `enabled = true`、5-7 条 `trusted_hash` 全在 |
+| 其他 IDE 正常 | 同一个 worker，claude 每天 100-400 条 → 一眼看去"系统在工作" |
+| **COUNT 看不出来** | `codex: 37 sessions` 这个数字本身毫无异常感 |
+
+### 🔑 检测方法：看 MAX，不要看 COUNT
+
+这是本条最重要的一句话。
+
+```bash
+sqlite3 -header -column ~/.claude-mem/claude-mem.db "
+SELECT platform_source,
+       COUNT(*) AS sessions,
+       datetime(MAX(started_at_epoch)/1000,'unixepoch','localtime') AS last_seen
+FROM sdk_sessions GROUP BY platform_source ORDER BY MAX(started_at_epoch) DESC;"
+```
+
+停摆时的输出长这样：
+
+```
+platform_source  sessions  last_seen
+---------------  --------  -------------------
+claude           390       2026-08-20 15:37:31   ← 今天
+cursor           47        2026-08-17 17:01:31   ← 3 天前，正常（偶发使用）
+codex            37        2026-07-13 07:22:39   ← 🚨 5 周前！
+```
+
+`COUNT(*)=37` 完全正常；**`MAX(started_at)` 一眼暴露问题**。
+
+**同时验 observations 层**（session 建了 ≠ 观察生成成功，两层可能只坏一层）：
+
+```bash
+sqlite3 -header -column ~/.claude-mem/claude-mem.db "
+SELECT s.platform_source, COUNT(o.id) AS obs,
+       datetime(MAX(o.created_at_epoch)/1000,'unixepoch','localtime') AS last_obs
+FROM observations o JOIN sdk_sessions s ON o.memory_session_id = s.memory_session_id
+GROUP BY s.platform_source ORDER BY MAX(o.created_at_epoch) DESC;"
+```
+
+### 根因排查（以 Codex 为例）
+
+```bash
+# 1. approve 了几个 hook
+grep -o 'codex-hooks.json:[a-z_]*:[0-9]*:[0-9]*' ~/.codex/config.toml | sed 's/.*json://' | sort
+
+# 2. 磁盘上实际有几个 hook
+python3 -c "
+import json,glob
+for p in glob.glob('$HOME/.codex/plugins/cache/*/claude-mem/*/hooks/codex-hooks.json'):
+    d=json.load(open(p))['hooks']
+    n=sum(len(g.get('hooks',[])) for arr in d.values() for g in arr)
+    print(f'{n} hooks in {p}')"
+
+# 3. worker 有没有收到过该来源的请求（换成你的 IDE 名）
+grep 'platformSource=codex' ~/.claude-mem/logs/claude-mem-*.log | tail -3
+```
+
+**判据**：approve 的 hook key 集合 ≠ 磁盘上实际的 hook 集合 → 就是这个问题。
+
+典型差异（claude-mem v13.0 → v13.15）：
+
+```
+approve 了 7 个              磁盘上只剩 5 个
+session_start:0:0  ✓         session_start:0:0  ✓
+session_start:0:1  ✗ 已删     （SessionStart 3 个合并成 1 个）
+session_start:0:2  ✗ 已删
+pre/post_tool_use, user_prompt_submit, stop  ✓
+```
+
+### 修复
+
+见 [ide-setup/codex-desktop.md → 每次升级后必须重新 Approve](ide-setup/codex-desktop.md#️-每次-claude-mem-升级后必须重新-approve-hooks)。一句话：GUI → Settings → Plugins → Review hooks → Approve all → Cmd+Q 重启。**不改任何代码，不手改 config.toml**（手改 trusted_hash = 绕过安全审批）。
+
+### 预防
+
+1. **每次 claude-mem 升级后主动跑一次上面的 MAX 查询**
+2. 把这条查询做成 cron / 探针，任一来源 `last_seen` 超过 N 天就告警
+3. 别用 `platform_source` 的**分布**推断"谁在干活"——采集通道坏掉的那个来源会直接从统计里消失，造成"只有 X 在工作"的假象
+
+> **元教训**：用任何分布数据下结论前，先验证**该数据的采集通道当前是否健康**。这个坑在本次事故里被踩过一次：看到"最近 400 条观察全是 claude"就推断"只有 claude 在干活"，实际是 codex 的活根本没进采集。
 
 ---
 
